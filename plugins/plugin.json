@@ -1,0 +1,6 @@
+{
+  "name": "Asilmedia",
+  "description": "Плагин для просмотра фильмов с asilmedia.org",
+  "version": "1.0.0",
+  "main": "asilmedia.js"
+}
