@@ -1,9 +1,0 @@
-// Регистрируем источник для Lampa
-Lampa.Api.sources.asilmedia = api;
-
-// ✅ Эта строчка заставит пункт меню появиться!
-Lampa.Source.add('Asilmedia', {
-    title: 'Asilmedia',
-    source: 'asilmedia',
-    component: 'category'
-});
