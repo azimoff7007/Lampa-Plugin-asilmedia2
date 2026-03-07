@@ -1,0 +1,8 @@
+{
+  "name": "Asilmedia",
+  "description": "Фильмы с asilmedia.org на узбекском языке",
+  "version": "1.0.0",
+  "main": "main.js",
+  "author": "Asilmedia Fan",
+  "icon": "icon.svg"
+}
