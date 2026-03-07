@@ -1,8 +1,9 @@
-{
-  "name": "Asilmedia",
-  "description": "Фильмы с asilmedia.org на узбекском языке",
-  "version": "1.0.0",
-  "main": "main.js",
-  "author": "Asilmedia Fan",
-  "icon": "icon.svg"
-}
+// Регистрируем источник для Lampa
+Lampa.Api.sources.asilmedia = api;
+
+// ✅ Эта строчка заставит пункт меню появиться!
+Lampa.Source.add('Asilmedia', {
+    title: 'Asilmedia',
+    source: 'asilmedia',
+    component: 'category'
+});
