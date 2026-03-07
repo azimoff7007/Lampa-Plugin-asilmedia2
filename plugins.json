@@ -1,0 +1,209 @@
+const PLUGIN_JS = `
+(function () {
+    'use strict';
+
+    var SOURCE_NAME = 'asilmedia';
+    var BASE        = 'http://asilmedia.org';
+    var PROXY       = 'https://lampa-plagin-asilmedia.azimoff7007.workers.dev/?url=';
+    var ICON        = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="15" rx="2"/><polyline points="17 2 12 7 7 2"/></svg>';
+
+    function proxyUrl(url) { return PROXY + encodeURIComponent(url); }
+
+    function decodeHtml(s) {
+        return s.replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&#039;/g,"'").replace(/&nbsp;/g,' ').trim();
+    }
+
+    function extractTitle(ctx) {
+        var patterns = [
+            /class="[^"]*title[^"]*"[^>]*>([^<]{2,100})</i,
+            /class="[^"]*name[^"]*"[^>]*>([^<]{2,100})</i,
+            /<h[1-4][^>]*>([^<]{2,100})<\/h[1-4]>/i,
+            /title="([^"]{2,120})"/,
+            /alt="([^"]{2,120})"/
+        ];
+        for (var i = 0; i < patterns.length; i++) {
+            var m = ctx.match(patterns[i]);
+            if (m && m[1].trim().length > 1) return decodeHtml(m[1].trim());
+        }
+        return '';
+    }
+
+    function extractPoster(ctx) {
+        var m = ctx.match(/src="([^"]*(?:uploads|mini|poster|rasmlar|thumb)[^"]*\\.(?:jpg|jpeg|png|webp))"/i)
+               || ctx.match(/data-src="([^"]*\\.(?:jpg|jpeg|png|webp))"/i)
+               || ctx.match(/src="([^"]+\\.(?:jpg|jpeg|png|webp))"/i);
+        if (!m) return '';
+        return m[1].startsWith('http') ? m[1] : BASE + m[1];
+    }
+
+    function extractYear(ctx) {
+        var m = ctx.match(/\\b(20[12]\\d)\\b/);
+        return m ? m[1] : '';
+    }
+
+    function parseCards(html) {
+        var results = [], seen = {};
+        var re1 = /href="(https?:\\/\\/asilmedia\\.org\\/(\\d+)-[^"]+\\.html)"/gi;
+        var m;
+        while ((m = re1.exec(html)) !== null) {
+            var url = m[1], id = m[2];
+            if (seen[id]) continue;
+            seen[id] = 1;
+            var ctx = html.slice(Math.max(0, m.index - 500), m.index + 1000);
+            var title = extractTitle(ctx);
+            if (!title) continue;
+            results.push({ id:id, url:url, title:title, poster:extractPoster(ctx), year:extractYear(ctx) });
+        }
+        if (!results.length) {
+            var re2 = /href="\\/(\\d+)-([^"]+\\.html)"/gi;
+            while ((m = re2.exec(html)) !== null) {
+                var id = m[1], url = BASE + '/' + m[1] + '-' + m[2];
+                if (seen[id]) continue;
+                seen[id] = 1;
+                var ctx = html.slice(Math.max(0, m.index - 500), m.index + 1000);
+                var title = extractTitle(ctx);
+                if (!title) continue;
+                results.push({ id:id, url:url, title:title, poster:extractPoster(ctx), year:extractYear(ctx) });
+            }
+        }
+        return results;
+    }
+
+    function parseVideoSources(html) {
+        var sources = [], seen = {};
+        var re = /<option[^>]+value="([^"]*\\.mp4[^"]*)"[^>]*>([^<]+)<\\/option>/gi;
+        var m;
+        while ((m = re.exec(html)) !== null) {
+            var raw = m[1].replace(/&amp;/g,'&');
+            var fm = raw.match(/file=([^&"]+)/);
+            var url = fm ? decodeURIComponent(fm[1]) : raw;
+            var label = m[2].trim();
+            if (seen[url] || url.indexOf('[') !== -1) continue;
+            seen[url] = 1;
+            var q = parseInt((label.match(/(\\d{3,4})p?/) || ['','0'])[1]) || 0;
+            sources.push({ url:url, label:label, quality:q });
+        }
+        if (!sources.length) {
+            var og = html.match(/og:video[^>]+content="([^"]+)"/i) || html.match(/content="([^"]+\\.mp4[^"]*)"/i);
+            if (og) sources.push({ url: og[1].replace(/&amp;/g,'&'), label:'Video', quality:0 });
+        }
+        sources.sort(function(a,b){ return b.quality - a.quality; });
+        return sources;
+    }
+
+    function fetchHtml(url, success, fail) {
+        var n = new Lampa.Reguest();
+        n.timeout(20000);
+        n.silent(proxyUrl(url), success, fail || function(){}, false, { dataType: 'text' });
+    }
+
+    function toCard(f) {
+        return { id:parseInt(f.id)||0, title:f.title||'', original_title:f.title||'', overview:'',
+            release_date:(f.year||'2024')+'-01-01', vote_average:0, img:f.poster||'',
+            poster_path:f.poster||'', background_image:f.poster||'', url:f.url||'',
+            source:SOURCE_NAME, _film:f };
+    }
+
+    var AsilSource = {
+        category: function (params, onSuccess, onError) {
+            var parts = [];
+            var cats = [
+                { url: BASE + '/lastnews/',              title: 'Yangiliklar' },
+                { url: BASE + '/films/tarjima_kinolar/', title: 'Tarjima kinolar' },
+                { url: BASE + '/films/zarfilm/',         title: 'Xorij filmlari' }
+            ];
+            cats.forEach(function (cat) {
+                (function (catUrl, catTitle) {
+                    parts.push(function (cb) {
+                        fetchHtml(catUrl, function (html) {
+                            var items = parseCards(html).map(toCard);
+                            cb({ title:catTitle, results:items, url:catUrl, more:items.length>=10, source:SOURCE_NAME });
+                        }, function () { cb({ error:true, title:catTitle }); });
+                    });
+                })(cat.url, cat.title);
+            });
+            Lampa.Api.partNext(parts, 1, onSuccess, onError);
+            return function (cb) { Lampa.Api.partNext(parts, 1, cb, onError); };
+        },
+        list: function (params, onSuccess, onError) {
+            var url = params.url || (BASE + '/lastnews/');
+            var page = params.page || 1;
+            var pageUrl = page > 1 ? url.replace(/\\/?$/, '/page/' + page + '/') : url;
+            fetchHtml(pageUrl, function (html) {
+                var items = parseCards(html).map(toCard);
+                onSuccess({ results:items, page:page, total_pages:page+(items.length>=10?1:0) });
+            }, onError);
+        },
+        search: function (movie, params, onSuccess, onError) {
+            var q = movie.title || movie.original_title || '';
+            fetchHtml(BASE + '/?do=search&subaction=search&story=' + encodeURIComponent(q), function (html) {
+                onSuccess({ results: parseCards(html).map(toCard) });
+            }, onError);
+        },
+        full: function (card, onSuccess) {
+            var url = card.url || (card._film && card._film.url) || '';
+            if (!url) { onSuccess(card); return; }
+            fetchHtml(url, function (html) {
+                card.videos = parseVideoSources(html).map(function(s){ return { url:s.url, title:s.label, quality:s.quality }; });
+                onSuccess(card);
+            }, function () { onSuccess(card); });
+        }
+    };
+
+    function startPlugin() {
+        if (window.asilmedia_plugin) return;
+        window.asilmedia_plugin = true;
+        Lampa.Api.sources[SOURCE_NAME] = AsilSource;
+        if (Lampa.Params && Lampa.Params.values && Lampa.Params.values.start_page) {
+            Lampa.Params.values.start_page[SOURCE_NAME] = 'AsilMedia';
+        }
+        var menuItem = $('<li data-action="' + SOURCE_NAME + '" class="menu__item selector">'
+            + '<div class="menu__ico">' + ICON + '</div>'
+            + '<div class="menu__text">AsilMedia</div></li>');
+        menuItem.on('hover:enter', function () {
+            Lampa.Activity.push({ title:'AsilMedia', component:'category', source:SOURCE_NAME, page:1 });
+        });
+        $('.menu .menu__list').eq(0).append(menuItem);
+    }
+
+    if (window.appready) { startPlugin(); }
+    else { Lampa.Listener.follow('app', function(e){ if(e.type==='ready') startPlugin(); }); }
+})();
+`;
+
+export default {
+  async fetch(request) {
+    const url = new URL(request.url);
+    const target = url.searchParams.get('url');
+
+    // Отдаём plugin.js
+    if (!target) {
+      return new Response(PLUGIN_JS, {
+        headers: {
+          'Content-Type': 'application/javascript; charset=utf-8',
+          'Access-Control-Allow-Origin': '*'
+        }
+      });
+    }
+
+    // Прокси к asilmedia.org
+    try {
+      const resp = await fetch(target, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          'Referer': 'http://asilmedia.org/',
+          'Accept': 'text/html,*/*'
+        }
+      });
+      const body = await resp.text();
+      return new Response(body, {
+        headers: {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Access-Control-Allow-Origin': '*'
+        }
+      });
+    } catch (e) {
+      return new Response('Error: ' + e.message, { status: 500 });
+    }
+  }
+}
